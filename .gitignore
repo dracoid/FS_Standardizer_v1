@@ -1,0 +1,63 @@
+# -----------------------------
+#  기본 OS·에디터/IDE 무시 항목
+# -----------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# PyCharm / IntelliJ IDEA
+.idea/
+# VS Code 사용 시
+.vscode/
+
+# -----------------------------
+#  Python 전역 무시 항목
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+# C-extensions
+*.so
+# 가상환경
+env/
+venv/
+.venv/
+# 패키지 관리 도구
+pip-wheel-metadata/
+*.egg-info/
+dist/
+build/
+
+# -----------------------------
+#  환경 변수·시크릿 키
+# -----------------------------
+.env
+.env.*
+*.env
+credentials.json
+token.json
+*.pem
+*.key
+
+
+# -----------------------------
+#  문서/노트북 출력물
+# -----------------------------
+.ipynb_checkpoints/
+*.pdf
+*.pptx
+*.doc*
+*.xlsx
+
+# -----------------------------
+#  기타 대용량 데이터(예: 모델, 로그, 정적 자산)
+# -----------------------------
+*.parquet
+*.csv
+*.zip
+*.gz
+*.h5
+*.pt
+*.ckpt
+logs/
