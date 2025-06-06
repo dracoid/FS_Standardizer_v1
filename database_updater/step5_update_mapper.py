@@ -1,77 +1,150 @@
 # database_updater/step5_update_mapper.py
-import os
+"""
+Step 5 ― Build/update **ticker_mapper.parquet**
+==============================================
+Maps every available ticker → CIK → SIC/office/industry title → 재무제표
+폴더 경로.
+
+• 직접 실행:  `python -m database_updater.step5_update_mapper`
+• 파이프라인: `database_updater.main` 내에서 `run_step5()` 호출
+"""
+
+from __future__ import annotations
+
 import json
-import pandas as pd
+import os
 from glob import glob
+from typing import List, Optional
 
-def run_step5(
-    sic_path="/Volumes/SSD1TB/30.Financial_data_python/SEC_data_SIC_ticker/sic_table.xlsx",
-    json_path="/Volumes/SSD1TB/30.Financial_data_python/SEC_data_SIC_ticker/company_tickers_exchange.json",
-    fs_paths=None,
-    output_path="/Volumes/SSD1TB/30.Financial_data_python/SEC_data_SIC_ticker/ticker_mapper.parquet"
-):
-    if fs_paths is None:
-        fs_paths = [
-            "/Volumes/SSD1TB/30.Financial_data_python/Refinded_data/mergedFS/month",
-            "/Volumes/SSD1TB/30.Financial_data_python/Refinded_data/mergedFS/quarter"
-        ]
+import pandas as pd
 
-    sic_df = pd.read_excel(sic_path)
+# ---------------------------------------------------------------------------
+# Constants (project‑specific paths)
+# ---------------------------------------------------------------------------
 
-    with open(json_path, 'r') as f:
-        json_data = json.load(f)
-    ticker_df = pd.DataFrame(json_data['data'], columns=json_data['fields'])
+SIC_PATH = (
+    "/Volumes/SSD1TB/30.Financial_data_python/SEC_data_SIC_ticker/sic_table.xlsx"
+)
+JSON_PATH = (
+    "/Volumes/SSD1TB/30.Financial_data_python/SEC_data_SIC_ticker/"
+    "company_tickers_exchange.json"
+)
+FS_DIRS = [
+    "/Volumes/SSD1TB/30.Financial_data_python/Refinded_data/mergedFS/month",
+    "/Volumes/SSD1TB/30.Financial_data_python/Refinded_data/mergedFS/quarter",
+]
+OUTPUT_PATH = (
+    "/Volumes/SSD1TB/30.Financial_data_python/SEC_data_SIC_ticker/"
+    "ticker_mapper.parquet"
+)
+PATH_COL = "FS_Path"  # downstream scripts use this column name
 
-    ticker_to_exchange = {
-        row['ticker']: {
-            "cik": int(row['cik']),
-            "exchange": row.get('exchange'),
-            "name": row.get('name')
-        }
-        for _, row in ticker_df.iterrows() if row['ticker']
-    }
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
 
-    parquet_files = []
-    for path in fs_paths:
-        parquet_files.extend(glob(os.path.join(path, "*.parquet")))
+def _collect_cik_to_sic(fs_dirs: List[str]) -> dict[int, int]:
+    """Scan merged‑FS parquet files and build {cik: sic} mapping."""
 
-    cik_to_filepaths = {}
-    for file_path in parquet_files:
+    cik_to_sic: dict[int, int] = {}
+    parquet_files = [fp for d in fs_dirs for fp in glob(os.path.join(d, "*.parquet"))]
+
+    for fp in parquet_files:
         try:
-            df = pd.read_parquet(file_path, columns=["cik", "sic"])
-            df = df.dropna(subset=["cik", "sic"])
-            for cik, sic in df[["cik", "sic"]].drop_duplicates().values:
-                cik = int(cik)
-                sic = int(sic)
-                if cik not in cik_to_filepaths:
-                    cik_to_filepaths[cik] = {"sic": sic, "files": []}
-                cik_to_filepaths[cik]["files"].append(file_path)
-        except Exception as e:
-            print(f"⚠️ Error reading {file_path}: {e}")
+            tmp = pd.read_parquet(fp, columns=["cik", "sic"]).dropna()
+            for cik, sic in tmp[["cik", "sic"]].drop_duplicates().values:
+                cik_to_sic[int(cik)] = int(sic)  # last‑write wins
+        except Exception as exc:  # pragma: no cover  – I/O diagnostics only
+            print(f"⚠️ {fp}: {exc}")
 
-    cik_to_ticker = {v["cik"]: k for k, v in ticker_to_exchange.items()}
-    records = []
-    for cik, info in cik_to_filepaths.items():
-        ticker = cik_to_ticker.get(cik)
-        if not ticker:
-            continue
-        meta = ticker_to_exchange[ticker]
-        sic_row = sic_df[sic_df["sic"] == info["sic"]]
-        if not sic_row.empty:
-            office = sic_row.iloc[0]["Office"]
-            industry = sic_row.iloc[0]["Industry Title"]
-            fs_path = f"/Volumes/SSD1TB/30.Financial_data_python/Refinded_data/SIC_CIK/{office}/{info['sic']}_{industry}/{cik}"
-            records.append({
+    return cik_to_sic
+
+
+def _build_records(
+    ticker_df: pd.DataFrame,
+    sic_df: pd.DataFrame,
+    cik_to_sic: dict[int, int],
+) -> list[dict]:
+    """Return list of mapping dicts – one per *ticker* (not per CIK)."""
+
+    records: list[dict] = []
+
+    for _, row in ticker_df.iterrows():
+        ticker = row["ticker"].upper().strip()
+        cik = int(row["cik"])
+        name = row.get("name")
+        exchange = row.get("exchange")
+
+        sic = cik_to_sic.get(cik)
+        if sic is None:
+            continue  # no merged FS yet
+
+        # Office & industry title lookup
+        match = sic_df.loc[sic_df["sic"] == sic]
+        if match.empty:
+            office, ind_title = "[Unknown]", "[Unknown]"
+        else:
+            office = match.iloc[0]["Office"]
+            ind_title = match.iloc[0]["Industry Title"]
+
+        fs_path = (
+            "/Volumes/SSD1TB/30.Financial_data_python/Refinded_data/SIC_CIK/"
+            f"{office}/{sic}_{ind_title}/{cik}"
+        )
+
+        records.append(
+            {
                 "ticker": ticker,
-                "name": meta["name"],
+                "name": name,
                 "cik": cik,
                 "office": office,
-                "Industry Title": industry,
-                "exchange": meta["exchange"],
-                "FS_Path": fs_path,
-                "sic": info["sic"]  # ✅ 추가
-            })
+                "Industry Title": ind_title,
+                "exchange": exchange,
+                PATH_COL: fs_path,
+                "sic": sic,
+            }
+        )
 
-    output_df = pd.DataFrame(records)
-    output_df.to_parquet(output_path, index=False)
-    print(f"✅ Mapping saved to: {output_path}")
+    return records
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+def run_step5(
+    *,
+    sic_path: str = SIC_PATH,
+    json_path: str = JSON_PATH,
+    fs_paths: Optional[List[str]] = None,
+    output_path: str = OUTPUT_PATH,
+) -> None:
+    """Generate *ticker_mapper.parquet*.
+
+    Called from the main pipeline or executed directly. All arguments have
+    sensible project‑specific defaults but can be overridden for testing.
+    """
+
+    # 1) Load supporting tables ------------------------------------------------
+    sic_df = pd.read_excel(sic_path)
+    with open(json_path, "r") as fh:
+        json_data = json.load(fh)
+    ticker_df = pd.DataFrame(json_data["data"], columns=json_data["fields"])
+    ticker_df["ticker"] = ticker_df["ticker"].str.upper().str.strip()
+
+    # 2) Map CIK → SIC from merged parquet files ------------------------------
+    cik_to_sic = _collect_cik_to_sic(fs_paths or FS_DIRS)
+
+    # 3) Build per‑ticker records --------------------------------------------
+    records = _build_records(ticker_df, sic_df, cik_to_sic)
+
+    # 4) Persist --------------------------------------------------------------
+    pd.DataFrame(records).to_parquet(output_path, index=False)
+    print(f"✅ Mapping saved → {output_path}  (총 {len(records)}건)")
+
+
+# ---------------------------------------------------------------------------
+# CLI shim
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    run_step5()

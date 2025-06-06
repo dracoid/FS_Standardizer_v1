@@ -1,54 +1,77 @@
+# FS_standardizer_BS/sector/bank_mapper.py
+"""
+Bank-sector Balance Sheet mapper
+--------------------------------
+• 자산(Assets), 부채(Liabilities), 자본(Equity)의 세부 항목을 업종 특화 규칙으로 분류
+• 매핑 실패 시 (None, None, None, None) 반환 → 상위 로직에서 'Unclassified' 처리
+"""
+
 from FS_standardizer_BS.utils.helper import clean_text
 
 
 def classify_bank_bs(tag: str, segments: str, plabel: str) -> tuple:
+    """
+    Parameters
+    ----------
+    tag : str
+        XBRL tag (e.g., 'CashAndDueFromBanks')
+    segments : str
+        Segment 정보 (없으면 None)
+    plabel : str
+        Presentation label (없으면 None)
+
+    Returns
+    -------
+    tuple
+        (category, subcategory, identifier, identifier_label)
+        모든 요소가 None이면 미분류(Unclassified)
+    """
     tag_lower = tag.lower()
+    seg_lower = (segments or "[Total]").lower()
     segments_str = segments or "[Total]"
     plabel_str = plabel or "[Unlabeled]"
-    seg_lower = segments_str.lower()
 
-    category = None
-    subcategory = None
+    # ---------- 기본값 ----------
+    category = subcategory = identifier = identifier_label = None
 
-    # ✅ Step 1: 금융업 전용 태그 분류
-    if tag_lower in ["cash", "cashequivalents", "cashandduefrombanks"]:
-        category = "01. Assets"
-        subcategory = "Cash and Reserves"
-    elif any(kw in tag_lower for kw in ["availableforsale", "heldtomaturity", "securities"]):
-        category = "01. Assets"
-        subcategory = "Investments and Securities"
-    elif "loan" in tag_lower or "leasefinancing" in tag_lower or "loansreceivable" in tag_lower:
-        category = "01. Assets"
-        subcategory = "Loans and Leases"
+    # ---------- 자산(Assets) ----------
+    if tag_lower in {"cash", "cashequivalents", "cashandduefrombanks"}:
+        category, subcategory = "01. Assets", "Cash and Reserves"
+
+    elif any(kw in tag_lower for kw in ("availableforsale", "heldtomaturity", "securities")):
+        category, subcategory = "01. Assets", "Investments and Securities"
+
+    elif any(kw in tag_lower for kw in ("loan", "leasefinancing", "loansreceivable")):
+        category, subcategory = "01. Assets", "Loans and Leases"
+
     elif "premises" in tag_lower or "equipment" in tag_lower:
-        category = "01. Assets"
-        subcategory = "Premises and Equipment"
+        category, subcategory = "01. Assets", "Premises and Equipment"
+
     elif "goodwill" in tag_lower or "intangible" in tag_lower:
-        category = "01. Assets"
-        subcategory = "Goodwill and Intangibles"
+        category, subcategory = "01. Assets", "Goodwill and Intangibles"
+
     elif "deferred" in tag_lower or "otherasset" in tag_lower:
-        category = "01. Assets"
-        subcategory = "Other Assets"
+        category, subcategory = "01. Assets", "Other Assets"
 
+    # ---------- 부채(Liabilities) ----------
     elif "deposit" in tag_lower or "interestbearing" in tag_lower:
-        category = "02. Liabilities"
-        subcategory = "Deposits"
-    elif "borrowings" in tag_lower or "shorttermdebt" in tag_lower or "longtermdebt" in tag_lower:
-        category = "02. Liabilities"
-        subcategory = "Borrowings and Debt"
+        category, subcategory = "02. Liabilities", "Deposits"
+
+    elif any(kw in tag_lower for kw in ("borrowings", "shorttermdebt", "longtermdebt")):
+        category, subcategory = "02. Liabilities", "Borrowings and Debt"
+
     elif "deferred" in tag_lower or "tax" in tag_lower or "otherliabilities" in tag_lower:
-        category = "02. Liabilities"
-        subcategory = "Other Liabilities"
+        category, subcategory = "02. Liabilities", "Other Liabilities"
 
-    elif any(kw in tag_lower for kw in ["equity", "commonstock", "retained", "accumulated"]):
-        category = "03. Equity"
-        subcategory = "Stockholders’ Equity"
+    # ---------- 자본(Equity) ----------
+    elif any(kw in tag_lower for kw in ("equity", "commonstock", "retained", "accumulated")):
+        category, subcategory = "03. Equity", "Stockholders’ Equity"
 
-    # ✅ Step 2: Unknown → None 반환
+    # ---------- 매핑 실패 ----------
     if category is None:
         return None, None, None, None
 
-    # ✅ Step 3: identifier 및 label
+    # ---------- identifier / identifier_label ----------
     identifier = f"[{segments_str}] | {plabel_str}"
     identifier_label = f"{identifier} | {clean_text(tag)}"
 
