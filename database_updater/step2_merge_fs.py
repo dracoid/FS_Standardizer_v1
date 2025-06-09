@@ -48,7 +48,7 @@ def run_step2(parquet_base_dir="/Volumes/SSD1TB/30.Financial_data_python/SEC_FS_
                 tag = pd.read_parquet(tag_file)
 
                 sub_reduced = sub[['adsh', 'cik', 'name', 'sic', 'wksi', 'form', 'period', 'fy', 'fp']]
-                num_reduced = num[['adsh', 'tag', 'version', 'ddate', 'qtrs', 'uom', 'dimh', 'iprx', 'value']]
+                num_reduced = num[['adsh', 'tag', 'version', 'ddate', 'qtrs', 'uom', 'dimh', 'iprx', 'value','version']]
                 pre_reduced = pre[['adsh', 'stmt', 'tag', 'version', 'plabel']]
                 dim.rename(columns={'dimhash': 'dimh'}, inplace=True)
 
