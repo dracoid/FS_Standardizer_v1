@@ -7,7 +7,8 @@ import pandas as pd
 from FS_Deduplicator import preprocess_financial_data
 from FS_standardizer_IS.standardizer import standardize_income_statement
 from FS_standardizer_BS.standardizer import standardize_balance_sheet
-from FS_standardizer_CF.standardizer import standardize_cashflow      # ← 바뀐 부분
+from FS_standardizer_CF.standardizer import standardize_cashflow          # (CF)
+from FS_standardizer_CI.standardizer import standardize_comp_income       # ★ NEW – CI
 # --------------------------------------------------------------------
 
 
@@ -43,17 +44,23 @@ def run_fs_standardization() -> None:
     cleaned_df = preprocess_financial_data(merged_df)
     cleaned_df["segments"] = cleaned_df["segments"].fillna("[Total]")
 
-    # ───────────── 5) IS / BS / CF 표준화
+    # ───────────── 5) IS / BS / CF / CI 표준화
     is_df = standardize_income_statement(cleaned_df, default_sic=sic)
     bs_df = standardize_balance_sheet(cleaned_df, default_sic=sic)
     cf_df = standardize_cashflow(cleaned_df, sic=sic)
+    ci_df = standardize_comp_income(cleaned_df, default_sic=sic)          # ★ NEW
 
     # ───────────── 6) 나머지 stmt 구분
-    known_stmts = {"IS", "BS", "CF"}
+    known_stmts = {"IS", "BS", "CF", "CI"}                                # ★ NEW
     other_df = cleaned_df[~cleaned_df["stmt"].str.upper().isin(known_stmts)].copy()
 
     # ───────────── 7) 전체 병합 · 정렬
-    final_parts = [is_df, bs_df] + ([cf_df] if not cf_df.empty else [])
+    final_parts = [is_df, bs_df]
+    if not cf_df.empty:
+        final_parts.append(cf_df)
+    if not ci_df.empty:                                                   # ★ NEW
+        final_parts.append(ci_df)
+
     final_df = pd.concat(final_parts + [other_df], ignore_index=True)
     final_df.sort_values("ddate_label_month", inplace=True)
 
@@ -65,9 +72,9 @@ def run_fs_standardization() -> None:
 
     # ───────────── 9) 전체 파일 저장
     final_parquet = os.path.join(output_dir, f"{base_name}.parquet")
-    final_excel = os.path.join(output_dir, f"{base_name}.xlsx")
+    final_excel   = os.path.join(output_dir, f"{base_name}.xlsx")
     final_df.to_parquet(final_parquet, index=False)
-    final_df.to_excel(final_excel, index=False)
+    final_df.to_excel(final_excel,  index=False)
     print(
         f"\n📁 Full FS saved to:\n"
         f"  • {final_parquet}\n"
