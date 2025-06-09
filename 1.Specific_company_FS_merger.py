@@ -7,16 +7,18 @@ import pandas as pd
 from FS_Deduplicator import preprocess_financial_data
 from FS_standardizer_IS.standardizer import standardize_income_statement
 from FS_standardizer_BS.standardizer import standardize_balance_sheet
-from FS_standardizer_CF.standardizer import standardize_cashflow          # (CF)
-from FS_standardizer_CI.standardizer import standardize_comp_income       # ★ NEW – CI
+from FS_standardizer_CF.standardizer import standardize_cashflow
+from FS_standardizer_CI.standardizer import standardize_comp_income
+from FS_standardizer_EQ.standardizer import standardize_equity_changes   # ★ NEW
+
 # --------------------------------------------------------------------
 
 
 def run_fs_standardization() -> None:
-    # ───────────── 1) 사용자 입력
+    # 1) 사용자 입력
     ticker = input("Enter the ticker symbol: ").upper().strip()
 
-    # ───────────── 2) 매핑 정보
+    # 2) 매핑 정보
     mapper_path = (
         "/Volumes/SSD1TB/30.Financial_data_python/SEC_data_SIC_ticker/"
         "ticker_mapper.parquet"
@@ -32,56 +34,61 @@ def run_fs_standardization() -> None:
         raise FileNotFoundError(f"Target path does not exist: {target_path}")
     print(f"✔ {ticker} → {target_path}")
 
-    # ───────────── 3) 파일 병합
+    # 3) 파일 병합
     parquet_files = sorted(glob(os.path.join(target_path, "*.parquet")))
     if not parquet_files:
         raise FileNotFoundError("No parquet files found in the target directory.")
 
-    merged_df = pd.concat([pd.read_parquet(pf) for pf in parquet_files], ignore_index=True)
+    merged_df = pd.concat(
+        [pd.read_parquet(pf) for pf in parquet_files], ignore_index=True
+    )
     print(f"✔ Merged {len(parquet_files)} files · {len(merged_df):,} rows")
 
-    # ───────────── 4) 공통 전처리
+    # 4) 공통 전처리
     cleaned_df = preprocess_financial_data(merged_df)
     cleaned_df["segments"] = cleaned_df["segments"].fillna("[Total]")
 
-    # ───────────── 5) IS / BS / CF / CI 표준화
+    # 5) 재무제표별 표준화
     is_df = standardize_income_statement(cleaned_df, default_sic=sic)
     bs_df = standardize_balance_sheet(cleaned_df, default_sic=sic)
     cf_df = standardize_cashflow(cleaned_df, sic=sic)
-    ci_df = standardize_comp_income(cleaned_df, default_sic=sic)          # ★ NEW
+    ci_df = standardize_comp_income(cleaned_df, default_sic=sic)
+    eq_df = standardize_equity_changes(cleaned_df, default_sic=sic)   # ★ NEW
 
-    # ───────────── 6) 나머지 stmt 구분
-    known_stmts = {"IS", "BS", "CF", "CI"}                                # ★ NEW
+    # 6) 기타 stmt 구분
+    known_stmts = {"IS", "BS", "CF", "CI", "EQ"}
     other_df = cleaned_df[~cleaned_df["stmt"].str.upper().isin(known_stmts)].copy()
 
-    # ───────────── 7) 전체 병합 · 정렬
+    # 7) 전체 병합·정렬
     final_parts = [is_df, bs_df]
     if not cf_df.empty:
         final_parts.append(cf_df)
-    if not ci_df.empty:                                                   # ★ NEW
+    if not ci_df.empty:
         final_parts.append(ci_df)
+    if not eq_df.empty:
+        final_parts.append(eq_df)
 
     final_df = pd.concat(final_parts + [other_df], ignore_index=True)
     final_df.sort_values("ddate_label_month", inplace=True)
 
-    # ───────────── 8) 저장 경로
+    # 8) 저장 경로
     output_dir = "/Volumes/SSD1TB/30.Financial_data_python/CompanyAnalysis"
     os.makedirs(output_dir, exist_ok=True)
     today_str = datetime.today().strftime("%y-%m-%d")
     base_name = f"{ticker}_{today_str}"
 
-    # ───────────── 9) 전체 파일 저장
+    # 9) 전체 파일 저장
     final_parquet = os.path.join(output_dir, f"{base_name}.parquet")
-    final_excel   = os.path.join(output_dir, f"{base_name}.xlsx")
+    final_excel = os.path.join(output_dir, f"{base_name}.xlsx")
     final_df.to_parquet(final_parquet, index=False)
-    final_df.to_excel(final_excel,  index=False)
+    final_df.to_excel(final_excel, index=False)
     print(
         f"\n📁 Full FS saved to:\n"
         f"  • {final_parquet}\n"
         f"  • {final_excel}"
     )
 
-    # ───────────── 10) stmt별 분리 저장
+    # 10) stmt별 분리 저장
     for stmt_type in final_df["stmt"].dropna().unique():
         stmt_df = final_df[final_df["stmt"].str.upper() == stmt_type.upper()]
         if stmt_df.empty:
